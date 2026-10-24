@@ -27,7 +27,7 @@ export async function api(path, { method = "GET", body, auth = true } = {}) {
     });
   } catch (err) {
     throw new Error(
-      `Cannot reach API at ${API_URL}. Start backend (npm run dev in backend). Emulator: adb reverse tcp:4000 tcp:4000. Phone: same Wi‑Fi and set EXPO_PUBLIC_API_URL to your PC LAN IP.`,
+      `Cannot reach API at ${API_URL}. Check EXPO_PUBLIC_API_URL (Render) or start local backend with npm run dev.`,
     );
   }
   const data = await res.json().catch(() => ({}));

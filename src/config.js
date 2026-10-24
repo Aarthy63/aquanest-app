@@ -22,29 +22,27 @@ function getDevHost() {
 function isLanHost(host) {
   if (!host) return false;
   if (host === "localhost" || host === "127.0.0.1" || host === "10.0.2.2") return false;
-  // Typical private LAN / hotspot ranges used by Expo
   return /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host);
 }
 
 function resolveApiUrl() {
-  // Browser / Expo web always talks to the host machine
+  // Always prefer explicit env (Render / production) over Metro LAN guess
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL;
+  if (fromEnv && String(fromEnv).trim()) {
+    return String(fromEnv).trim().replace(/\/$/, "");
+  }
+
   if (Platform.OS === "web") {
     return "http://127.0.0.1:4000";
   }
 
   const host = getDevHost();
 
-  // Physical device / Expo Go on LAN or phone hotspot — use same host as Metro
+  // Local Expo Go without EXPO_PUBLIC_API_URL → same machine as Metro
   if (isLanHost(host)) {
     return `http://${host}:4000`;
   }
 
-  const fromEnv = process.env.EXPO_PUBLIC_API_URL;
-  if (fromEnv) {
-    return String(fromEnv).replace(/\/$/, "");
-  }
-
-  // Android emulator → host machine
   if (Platform.OS === "android" || host === "10.0.2.2") {
     return "http://10.0.2.2:4000";
   }
@@ -68,6 +66,5 @@ export const FIREBASE_WEB = {
 export const firebaseConfigured = !!(FIREBASE_WEB.apiKey && FIREBASE_WEB.projectId);
 
 if (__DEV__) {
-  // Helps debug "Cannot reach API" on device vs emulator
   console.log(`[AquaNest] API_URL=${API_URL} (metroHost=${getDevHost() || "n/a"})`);
 }
