@@ -111,25 +111,18 @@ export default function CheckoutScreen({ navigation }) {
   }
 
   async function completeOrder({ paymentId, orderId, signature }) {
-    if (orderId && paymentId) {
-      await api("/api/payments/razorpay/verify", {
-        method: "POST",
-        body: {
-          razorpay_order_id: orderId,
-          razorpay_payment_id: paymentId,
-          razorpay_signature: signature || "",
-        },
-      });
-    }
-    const order = await api("/api/orders", {
+    // Single API call — verify + place order (faster than two round-trips to Render)
+    return api("/api/orders/place-paid", {
       method: "POST",
       body: {
         addressId,
         paymentMethod: `Razorpay · ${methodLabel || method}`,
         paymentRef: paymentId || orderId,
+        razorpay_order_id: orderId || undefined,
+        razorpay_payment_id: paymentId || undefined,
+        razorpay_signature: signature || "",
       },
     });
-    return order;
   }
 
   async function finishSuccess({ paymentId, orderId, signature }) {

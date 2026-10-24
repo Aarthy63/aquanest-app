@@ -139,7 +139,7 @@ export function NotificationProvider({ children }) {
 
     const poll = setInterval(() => {
       if (AppState.currentState === "active") refresh();
-    }, 25000);
+    }, 45000);
 
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") refresh();

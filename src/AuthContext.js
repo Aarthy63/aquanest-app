@@ -59,11 +59,15 @@ export function AuthProvider({ children }) {
 
   async function applySession(data) {
     await setToken(data.token);
-    let nextUser = data.user;
+    const nextUser = data.user;
     await setCachedUser(nextUser);
     setUser(nextUser);
-    nextUser = (await pushLocalSnapshot(nextUser)) || nextUser;
-    setUser(nextUser);
+    // Defer sync / push so login & home open instantly
+    pushLocalSnapshot(nextUser)
+      .then((merged) => {
+        if (merged && merged !== nextUser) setUser(merged);
+      })
+      .catch(() => {});
     registerPushToken().catch(() => {});
     return nextUser;
   }
@@ -104,10 +108,14 @@ export function AuthProvider({ children }) {
     }
 
     try {
-      let me = await api("/api/me");
-      me = (await pushLocalSnapshot(me)) || me;
+      const me = await api("/api/me");
       setUser(me);
       await setCachedUser(me);
+      pushLocalSnapshot(me)
+        .then((merged) => {
+          if (merged) setUser(merged);
+        })
+        .catch(() => {});
       registerPushToken().catch(() => {});
     } catch (err) {
       const status = err instanceof ApiError ? err.status : 0;
@@ -136,9 +144,14 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    // Wake Render early so cart/pay feel faster
-    api("/api/health", { auth: false }).catch(() => {});
-    refresh().finally(() => setReady(true));
+    // Show cached session immediately, wake API in background
+    (async () => {
+      const cached = await getCachedUser();
+      if (cached) setUser(cached);
+      setReady(true);
+      api("/api/health", { auth: false }).catch(() => {});
+      refresh({ allowCached: true }).catch(() => {});
+    })();
   }, []);
 
   useEffect(() => {
