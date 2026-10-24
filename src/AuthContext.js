@@ -4,8 +4,10 @@ import {
   ApiError,
   api,
   getCachedUser,
+  getStoredCreds,
   getToken,
   setCachedUser,
+  setStoredCreds,
   setToken,
 } from "./api";
 import { registerPushToken } from "./push";
@@ -18,18 +20,48 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
 
+  async function applySession(data) {
+    await setToken(data.token);
+    await setCachedUser(data.user);
+    setUser(data.user);
+    registerPushToken().catch(() => {});
+    return data.user;
+  }
+
+  async function silentRecover() {
+    const creds = await getStoredCreds();
+    if (!creds?.email || !creds?.password) return null;
+    const data = await api("/api/auth/login", {
+      method: "POST",
+      auth: false,
+      headers: { "X-AquaNest-Recover": "1" },
+      body: {
+        email: creds.email,
+        password: creds.password,
+        name: creds.name || undefined,
+        phone: creds.phone || undefined,
+        recover: true,
+        device: deviceLabel(),
+      },
+    });
+    return applySession(data);
+  }
+
   async function refresh({ allowCached = true } = {}) {
     const token = await getToken();
-    if (!token) {
-      setUser(null);
-      await setCachedUser(null);
-      return;
-    }
+    const cached = allowCached ? await getCachedUser() : null;
+    if (cached) setUser(cached);
 
-    // Show last known profile immediately so reopen never looks logged-out
-    if (allowCached) {
-      const cached = await getCachedUser();
-      if (cached) setUser(cached);
+    if (!token) {
+      // No token — still try silent login with saved register/login password
+      try {
+        const recovered = await silentRecover();
+        if (recovered) return;
+      } catch {
+        /* stay logged out */
+      }
+      setUser(null);
+      return;
     }
 
     try {
@@ -40,19 +72,25 @@ export function AuthProvider({ children }) {
     } catch (err) {
       const status = err instanceof ApiError ? err.status : 0;
       const network = err instanceof ApiError ? err.network : false;
-      // Keep session on network / cold-start / 5xx — only hard-logout on auth failure
+
       if (network || status >= 500 || status === 0) {
-        const cached = await getCachedUser();
         if (cached) setUser(cached);
         return;
       }
+
       if (status === 401 || status === 403) {
+        try {
+          const recovered = await silentRecover();
+          if (recovered) return;
+        } catch {
+          /* fall through */
+        }
         await setToken(null);
         await setCachedUser(null);
         setUser(null);
         return;
       }
-      const cached = await getCachedUser();
+
       if (cached) setUser(cached);
     }
   }
@@ -61,7 +99,6 @@ export function AuthProvider({ children }) {
     refresh().finally(() => setReady(true));
   }, []);
 
-  // Re-validate when app comes back to foreground (Render may have slept)
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") refresh({ allowCached: true }).catch(() => {});
@@ -79,15 +116,14 @@ export function AuthProvider({ children }) {
           body: {
             email: String(email).trim().toLowerCase(),
             password,
+            recover: true,
             device: deviceLabel(),
           },
           auth: false,
+          headers: { "X-AquaNest-Recover": "1" },
         });
-        await setToken(data.token);
-        await setCachedUser(data.user);
-        setUser(data.user);
-        registerPushToken().catch(() => {});
-        return data.user;
+        await setStoredCreds({ email, password, name: data.user?.name, phone: data.user?.phone });
+        return applySession(data);
       },
       async register(payload) {
         const data = await api("/api/auth/register", {
@@ -99,15 +135,18 @@ export function AuthProvider({ children }) {
           },
           auth: false,
         });
-        await setToken(data.token);
-        await setCachedUser(data.user);
-        setUser(data.user);
-        registerPushToken().catch(() => {});
-        return data.user;
+        await setStoredCreds({
+          email: payload.email,
+          password: payload.password,
+          name: payload.name,
+          phone: payload.phone,
+        });
+        return applySession(data);
       },
       async logout() {
         await setToken(null);
         await setCachedUser(null);
+        await setStoredCreds(null);
         setUser(null);
       },
       setWishlist(wishlist) {
