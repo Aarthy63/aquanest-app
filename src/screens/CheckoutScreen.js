@@ -63,6 +63,9 @@ export default function CheckoutScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       if (!placedOrder) load();
+      // Warm Render so Pay / Razorpay order is faster
+      api("/api/payments/config", { auth: false }).catch(() => {});
+      api("/api/health", { auth: false }).catch(() => {});
     }, [load, placedOrder]),
   );
 
@@ -85,10 +88,11 @@ export default function CheckoutScreen({ navigation }) {
   async function openPaySheet() {
     if (!addressId) return;
     setPayOpen(true);
-    setPaying("idle");
+    setPaying("processing");
     setCheckoutReady(false);
     setRzpOrder(null);
     try {
+      // Wake API + create Razorpay order together (Render cold start)
       const created = await api("/api/payments/razorpay/order", {
         method: "POST",
         body: { addressId },
@@ -97,9 +101,10 @@ export default function CheckoutScreen({ navigation }) {
       const mode = created.mode || "demo";
       setRzpOrder({ ...created, keyId });
       setPayMode(mode);
-      // Real Checkout when backend created a Razorpay order with a key
+      setPaying("idle");
       setCheckoutReady(!!(keyId && created.id && !String(created.id).startsWith("order_test_")));
     } catch (e) {
+      setPaying("idle");
       setPayOpen(false);
       feedback.error("Payment", { description: e.message });
     }

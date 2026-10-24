@@ -20,7 +20,7 @@ function kindAllowed(kind, settings) {
   if (kind === "order") return settings.pushOrders !== false;
   if (kind === "service") return settings.pushService !== false;
   if (kind === "offer") return settings.pushOffers !== false;
-  if (kind === "login") return true;
+  if (kind === "login") return settings.pushOrders !== false;
   if (kind === "dealer") return true;
   if (kind === "admin") return true;
   return true;
@@ -31,7 +31,9 @@ export function NotificationProvider({ children }) {
   const feedback = useFeedback();
   const [items, setItems] = useState([]);
   const seenRef = useRef(new Set());
-  const readyRef = useRef(false);
+  const primedRef = useRef(false);
+  const busyRef = useRef(false);
+  const lastPopupAt = useRef(0);
 
   const unread = useMemo(() => items.filter((n) => !n.read).length, [items]);
 
@@ -47,59 +49,67 @@ export function NotificationProvider({ children }) {
 
   const saveSeen = useCallback(async (ids) => {
     const merged = new Set([...seenRef.current, ...ids]);
-    seenRef.current = merged;
-    const trimmed = [...merged].slice(-200);
+    const trimmed = [...merged].slice(-300);
     seenRef.current = new Set(trimmed);
     await AsyncStorage.setItem(SEEN_KEY, JSON.stringify(trimmed));
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!user) {
-      setItems([]);
-      return;
-    }
+    if (!user || busyRef.current) return;
+    busyRef.current = true;
     try {
       const list = await api("/api/notifications");
       const next = Array.isArray(list) ? list : [];
+      const allIds = next.map((n) => n.id).filter(Boolean);
+
+      // First load after open/login: mark everything seen — no popup spam
+      if (!primedRef.current) {
+        await saveSeen(allIds);
+        primedRef.current = true;
+        setItems(next);
+        return;
+      }
 
       const settingsRaw = await AsyncStorage.getItem(SETTINGS_KEY);
       const settings = settingsRaw ? JSON.parse(settingsRaw) : {};
-      const now = Date.now();
-      // First load: only banner very recent unread (e.g. this login). Later: any new unread.
-      const fresh = next.filter((n) => {
-        if (!n?.id || seenRef.current.has(n.id) || n.read) return false;
-        if (!readyRef.current) {
-          const created = n.createdAt ? new Date(n.createdAt).getTime() : 0;
-          return created > 0 && now - created < 3 * 60 * 1000;
-        }
-        return true;
-      });
 
-      for (const n of fresh) {
-        if (!kindAllowed(n.kind, settings)) continue;
-        const title = n.title || "AquaNest";
-        const body = n.body || "You have a new update";
-        showPhoneNotification({
+      const fresh = next
+        .filter((n) => {
+          if (!n?.id || n.read || seenRef.current.has(n.id)) return false;
+          if (!kindAllowed(n.kind, settings)) return false;
+          // Ignore login noise and very old rows
+          if (n.kind === "login") return false;
+          const created = n.createdAt ? new Date(n.createdAt).getTime() : 0;
+          return created > 0 && Date.now() - created < 2 * 60 * 1000;
+        })
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+      // Always advance seen set so history never re-fires
+      await saveSeen(allIds);
+
+      const newest = fresh[0];
+      const now = Date.now();
+      // One popup max (cooldown), one channel only — native OR toast, not both
+      if (newest && now - lastPopupAt.current > 8000) {
+        lastPopupAt.current = now;
+        const title = newest.title || "AquaNest";
+        const body = newest.body || "You have a new update";
+        const shown = await showPhoneNotification({
           title,
           body,
-          data: { id: n.id, kind: n.kind || "alert" },
-        }).catch(() => {});
-        if (readyRef.current) {
-          feedback.info(title, {
-            description: body,
-            duration: 4200,
-            actionLabel: "View",
-            onAction: () => {},
-          });
+          data: { id: newest.id, kind: newest.kind || "alert" },
+        }).catch(() => ({ ok: false }));
+        // Fallback toast only when native/Alert path did not show
+        if (!shown?.ok) {
+          feedback.info(title, { description: body, duration: 3600 });
         }
       }
-
-      await saveSeen(next.map((n) => n.id).filter(Boolean));
-      readyRef.current = true;
 
       setItems(next);
     } catch {
       // ignore transient poll errors
+    } finally {
+      busyRef.current = false;
     }
   }, [user, feedback, saveSeen]);
 
@@ -113,8 +123,7 @@ export function NotificationProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    readyRef.current = false;
-    seenRef.current = new Set();
+    primedRef.current = false;
     if (!user) {
       setItems([]);
       return undefined;
@@ -130,7 +139,7 @@ export function NotificationProvider({ children }) {
 
     const poll = setInterval(() => {
       if (AppState.currentState === "active") refresh();
-    }, 8000);
+    }, 25000);
 
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") refresh();

@@ -243,17 +243,19 @@ export default function ProductScreen({ route, navigation }) {
 
   async function add(goToCart) {
     if (!user) return openLogin();
+    // Optimistic UI — don't wait on Render cold start before feedback
     setBusy(true);
+    if (goToCart) {
+      openCart();
+    } else {
+      feedback.success("Added to cart", {
+        description: `${qty} item${qty > 1 ? "s" : ""} added`,
+        actionLabel: "View",
+        onAction: openCart,
+      });
+    }
     try {
       await api("/api/cart/items", { method: "POST", body: { productId: id, qty } });
-      if (goToCart) openCart();
-      else {
-        feedback.success("Added to cart", {
-          description: `${qty} item${qty > 1 ? "s" : ""} added`,
-          actionLabel: "View",
-          onAction: openCart,
-        });
-      }
     } catch (e) {
       feedback.error("Could not add", { description: e.message });
     } finally {

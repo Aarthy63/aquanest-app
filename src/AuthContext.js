@@ -136,6 +136,8 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
+    // Wake Render early so cart/pay feel faster
+    api("/api/health", { auth: false }).catch(() => {});
     refresh().finally(() => setReady(true));
   }, []);
 

@@ -41,9 +41,20 @@ export default function CartScreen({ navigation }) {
   const savings = items.reduce((sum, line) => sum + Math.max(0, (line.product.mrp - line.unitPrice) * line.qty), 0);
 
   function setQty(line, qty) {
+    // Optimistic local update for snappy APK feel
+    setCart((prev) => {
+      if (!prev) return prev;
+      const items = (prev.items || []).map((l) =>
+        l.productId === line.productId ? { ...l, qty } : l,
+      );
+      return { ...prev, items, itemCount: items.reduce((s, l) => s + l.qty, 0) };
+    });
     api(`/api/cart/items/${line.productId}`, { method: "PATCH", body: { qty } })
       .then(setCart)
-      .catch((e) => feedback.error("Cart", { description: e.message }));
+      .catch((e) => {
+        load();
+        feedback.error("Cart", { description: e.message });
+      });
   }
 
   function remove(line) {

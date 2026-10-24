@@ -196,13 +196,9 @@ export async function showPhoneNotification({ title, body, data = {} } = {}) {
   const heading = title || "AquaNest";
   const message = body || "You have a new update";
 
-  // Expo Go / no native push: in-app Alert only if user allowed
+  // Expo Go: let NotificationCenter show a single toast — avoid Alert spam
   if (!useNativePush() || ready.mode === "expo_go" || ready.mode === "pending") {
-    if (choice === "allowed" || ready.ok) {
-      Alert.alert(heading, message);
-      return { ok: true, mode: "alert" };
-    }
-    return { ok: false, reason: ready.reason || "not_ready" };
+    return { ok: false, reason: ready.reason || "use_toast" };
   }
 
   if (!ready.ok) return ready;
@@ -210,8 +206,7 @@ export async function showPhoneNotification({ title, body, data = {} } = {}) {
   try {
     const Notifications = await import("expo-notifications");
     if (typeof Notifications.scheduleNotificationAsync !== "function") {
-      Alert.alert(heading, message);
-      return { ok: true, mode: "alert_fallback" };
+      return { ok: false, reason: "no_scheduler" };
     }
     await Notifications.scheduleNotificationAsync({
       content: {
@@ -226,8 +221,7 @@ export async function showPhoneNotification({ title, body, data = {} } = {}) {
     return { ok: true, mode: "native" };
   } catch (err) {
     console.warn("[push:show]", err?.message || String(err));
-    Alert.alert(heading, message);
-    return { ok: true, mode: "alert_fallback" };
+    return { ok: false, reason: err?.message || "push_show_failed" };
   }
 }
 
