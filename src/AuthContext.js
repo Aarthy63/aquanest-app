@@ -16,16 +16,56 @@ const deviceLabel = () => `AquaNest · ${Platform.OS}`;
 
 const AuthContext = createContext(null);
 
+function snapshotFromUser(user) {
+  if (!user) return null;
+  return {
+    name: user.name,
+    phone: user.phone,
+    cart: user.cart || [],
+    wishlist: user.wishlist || [],
+    addresses: user.addresses || [],
+    orders: user.orders || [],
+    bookings: user.bookings || [],
+    notifications: user.notifications || [],
+  };
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
 
+  async function pushLocalSnapshot(serverUser) {
+    const cached = await getCachedUser();
+    if (!cached) return serverUser;
+    const localOrders = cached.orders?.length || 0;
+    const serverOrders = serverUser?.orders?.length || 0;
+    const localAddresses = cached.addresses?.length || 0;
+    const serverAddresses = serverUser?.addresses?.length || 0;
+    // Only sync up when phone has more history than wiped server account
+    if (localOrders <= serverOrders && localAddresses <= serverAddresses) {
+      return serverUser;
+    }
+    try {
+      const merged = await api("/api/me/sync", {
+        method: "POST",
+        body: snapshotFromUser(cached),
+      });
+      await setCachedUser(merged);
+      return merged;
+    } catch {
+      return serverUser;
+    }
+  }
+
   async function applySession(data) {
     await setToken(data.token);
-    await setCachedUser(data.user);
-    setUser(data.user);
+    let nextUser = data.user;
+    await setCachedUser(nextUser);
+    setUser(nextUser);
+    nextUser = (await pushLocalSnapshot(nextUser)) || nextUser;
+    setUser(nextUser);
     registerPushToken().catch(() => {});
-    return data.user;
+    return nextUser;
   }
 
   async function silentRecover() {
@@ -53,7 +93,6 @@ export function AuthProvider({ children }) {
     if (cached) setUser(cached);
 
     if (!token) {
-      // No token — still try silent login with saved register/login password
       try {
         const recovered = await silentRecover();
         if (recovered) return;
@@ -65,7 +104,8 @@ export function AuthProvider({ children }) {
     }
 
     try {
-      const me = await api("/api/me");
+      let me = await api("/api/me");
+      me = (await pushLocalSnapshot(me)) || me;
       setUser(me);
       await setCachedUser(me);
       registerPushToken().catch(() => {});
@@ -86,7 +126,7 @@ export function AuthProvider({ children }) {
           /* fall through */
         }
         await setToken(null);
-        await setCachedUser(null);
+        // Keep cached orders on device even if session ends — only clear on logout
         setUser(null);
         return;
       }
@@ -148,6 +188,11 @@ export function AuthProvider({ children }) {
         await setCachedUser(null);
         await setStoredCreds(null);
         setUser(null);
+      },
+      /** Keep local cache in sync after cart/order mutations */
+      async setUserAndCache(next) {
+        setUser(next);
+        if (next) await setCachedUser(next);
       },
       setWishlist(wishlist) {
         setUser((current) => {

@@ -13,11 +13,12 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { api } from "../api";
+import { api, setCachedUser } from "../api";
 import { RAZORPAY_KEY_ID } from "../config";
 import { productImage } from "../images";
 import { colors, formatINR } from "../theme";
 import { useTheme } from "../ThemeContext";
+import { useAuth } from "../AuthContext";
 import { SuccessBanner, useFeedback } from "../ui/Feedback";
 import RazorpayCheckout from "../ui/RazorpayCheckout";
 
@@ -33,6 +34,7 @@ const EMPTY_FORM = { name: "", phone: "", line1: "", line2: "", city: "", state:
 export default function CheckoutScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { c } = useTheme();
+  const { user, setUserAndCache, refresh } = useAuth();
   const feedback = useFeedback();
   const [cart, setCart] = useState(null);
   const [addresses, setAddresses] = useState([]);
@@ -130,6 +132,18 @@ export default function CheckoutScreen({ navigation }) {
     setPaying("success");
     try {
       const order = await completeOrder({ paymentId, orderId, signature });
+      // Persist order on device so reopen still shows history if Render wiped memory
+      if (user) {
+        const next = {
+          ...user,
+          orders: [order, ...(user.orders || []).filter((o) => o.id !== order.id)],
+          cart: [],
+        };
+        if (setUserAndCache) await setUserAndCache(next);
+        else await setCachedUser(next);
+      } else {
+        await refresh?.();
+      }
       setPayOpen(false);
       setPaying("idle");
       setCheckoutReady(false);

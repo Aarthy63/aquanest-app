@@ -66,10 +66,25 @@ export function OrdersScreen({ route, navigation }) {
       setLoading(false);
       return;
     }
+    // Show cached orders immediately (survives Render wipe / reopen)
+    if (Array.isArray(user.orders) && user.orders.length) {
+      setOrders(user.orders);
+    }
     setLoading(true);
     api("/api/orders")
-      .then(setOrders)
-      .catch((e) => feedback.error("Orders", { description: e.message }))
+      .then((list) => {
+        const merged = [...(list || [])];
+        const seen = new Set(merged.map((o) => o.id));
+        for (const o of user.orders || []) {
+          if (o?.id && !seen.has(o.id)) merged.push(o);
+        }
+        merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        setOrders(merged);
+      })
+      .catch((e) => {
+        if (user.orders?.length) setOrders(user.orders);
+        else feedback.error("Orders", { description: e.message });
+      })
       .finally(() => setLoading(false));
   }, [user]);
 
