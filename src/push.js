@@ -1,16 +1,21 @@
 import { Alert, Linking, PermissionsAndroid, Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { api } from "./api";
 
-let readyPromise = null;
-let askedThisSession = false;
+const PROMPT_KEY = "aquanest_push_prompt_v1";
 
-/** Expo Go cannot load expo-notifications native modules on Android SDK 53+. */
+let readyPromise = null;
+
 function isExpoGo() {
   return (
     Constants.appOwnership === "expo" ||
     Constants.executionEnvironment === "storeClient"
   );
+}
+
+function useNativePush() {
+  return !isExpoGo() && process.env.EXPO_PUBLIC_ENABLE_NATIVE_PUSH === "1";
 }
 
 async function requestAndroidPostNotifications() {
@@ -20,13 +25,6 @@ async function requestAndroidPostNotifications() {
   try {
     const result = await PermissionsAndroid.request(
       PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-      {
-        title: "Allow AquaNest notifications",
-        message:
-          "AquaNest needs permission to show order, login, and service alerts on your phone.",
-        buttonPositive: "Allow",
-        buttonNegative: "Not now",
-      },
     );
     return result === PermissionsAndroid.RESULTS.GRANTED;
   } catch {
@@ -34,24 +32,76 @@ async function requestAndroidPostNotifications() {
   }
 }
 
-function explainDenied() {
-  Alert.alert(
-    "Notifications are off",
-    "Enable notifications in system settings so AquaNest can show alerts on your phone.",
-    [
-      { text: "Not now", style: "cancel" },
-      {
-        text: "Open settings",
-        onPress: () => Linking.openSettings().catch(() => {}),
-      },
-    ],
-  );
+async function getPromptChoice() {
+  try {
+    return (await AsyncStorage.getItem(PROMPT_KEY)) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function setPromptChoice(value) {
+  try {
+    await AsyncStorage.setItem(PROMPT_KEY, value);
+  } catch {
+    // ignore
+  }
 }
 
 /**
- * Permission + local setup.
- * Expo Go: Android permission dialog only (no expo-notifications — avoids ExpoApplication crash).
- * Dev/production build: full expo-notifications when EXPO_PUBLIC_ENABLE_NATIVE_PUSH=1.
+ * One-time Allow / Decline popup — call when Account screen opens.
+ * Does not ask again after the user chooses.
+ */
+export async function promptAccountNotificationsOnce() {
+  if (Platform.OS === "web") return { ok: false, reason: "web" };
+
+  const existing = await getPromptChoice();
+  if (existing === "allowed" || existing === "declined") {
+    if (existing === "allowed") {
+      await ensureLocalNotifications({ forcePrompt: false });
+    }
+    return { ok: existing === "allowed", reason: existing, alreadyAsked: true };
+  }
+
+  return new Promise((resolve) => {
+    Alert.alert(
+      "Allow notifications?",
+      "AquaNest can alert you about orders, service bookings, and offers. You can change this later in Account settings.",
+      [
+        {
+          text: "Decline",
+          style: "cancel",
+          onPress: async () => {
+            await setPromptChoice("declined");
+            resolve({ ok: false, reason: "declined", alreadyAsked: false });
+          },
+        },
+        {
+          text: "Allow",
+          onPress: async () => {
+            const result = await ensureLocalNotifications({ forcePrompt: true });
+            await setPromptChoice(result.ok ? "allowed" : "declined");
+            if (!result.ok) {
+              Alert.alert(
+                "Notifications are off",
+                "You can enable them anytime in phone Settings → Apps → AquaNest / Expo Go → Notifications.",
+                [
+                  { text: "OK", style: "cancel" },
+                  { text: "Open settings", onPress: () => Linking.openSettings().catch(() => {}) },
+                ],
+              );
+            }
+            resolve({ ok: !!result.ok, reason: result.ok ? "allowed" : "permission_denied", alreadyAsked: false });
+          },
+        },
+      ],
+      { cancelable: false },
+    );
+  });
+}
+
+/**
+ * Soft setup without forcing the system dialog (unless forcePrompt).
  */
 export async function ensureLocalNotifications({ forcePrompt = false } = {}) {
   if (Platform.OS === "web") {
@@ -61,27 +111,32 @@ export async function ensureLocalNotifications({ forcePrompt = false } = {}) {
 
   readyPromise = (async () => {
     try {
-      const androidOk = await requestAndroidPostNotifications();
+      const choice = await getPromptChoice();
+      if (choice === "declined" && !forcePrompt) {
+        return { ok: false, reason: "declined", mode: "skipped" };
+      }
 
-      // Expo Go path — never import expo-notifications
-      if (isExpoGo() || process.env.EXPO_PUBLIC_ENABLE_NATIVE_PUSH !== "1") {
+      let androidOk = true;
+      if (forcePrompt || choice === "allowed") {
+        androidOk = await requestAndroidPostNotifications();
+      } else {
+        // Don't pop system permission until Account Allow
+        return { ok: false, reason: "not_prompted", mode: "pending" };
+      }
+
+      if (!useNativePush()) {
         if (!androidOk && Platform.OS === "android" && Platform.Version >= 33) {
-          if (!askedThisSession || forcePrompt) {
-            askedThisSession = true;
-            explainDenied();
-          }
           return { ok: false, reason: "permission_denied", mode: "expo_go" };
         }
-        askedThisSession = true;
         return { ok: true, mode: "expo_go" };
       }
 
+      // Native / APK build only — dynamic import kept behind flag
       const Notifications = await import("expo-notifications");
 
       if (typeof Notifications.setNotificationHandler === "function") {
         Notifications.setNotificationHandler({
           handleNotification: async () => ({
-            shouldShowAlert: true,
             shouldPlaySound: true,
             shouldSetBadge: true,
             shouldShowBanner: true,
@@ -100,7 +155,7 @@ export async function ensureLocalNotifications({ forcePrompt = false } = {}) {
             sound: "default",
           });
         } catch {
-          // channel optional
+          // optional
         }
       }
 
@@ -109,10 +164,7 @@ export async function ensureLocalNotifications({ forcePrompt = false } = {}) {
         const existing = await Notifications.getPermissionsAsync();
         status = existing.status;
       }
-      if (
-        (status !== "granted" || forcePrompt) &&
-        typeof Notifications.requestPermissionsAsync === "function"
-      ) {
+      if (status !== "granted" && typeof Notifications.requestPermissionsAsync === "function") {
         const requested = await Notifications.requestPermissionsAsync({
           ios: { allowAlert: true, allowBadge: true, allowSound: true },
         });
@@ -121,14 +173,8 @@ export async function ensureLocalNotifications({ forcePrompt = false } = {}) {
 
       const granted = status === "granted" || androidOk;
       if (!granted) {
-        if (!askedThisSession || forcePrompt) {
-          askedThisSession = true;
-          explainDenied();
-        }
         return { ok: false, reason: "permission_denied", mode: "native" };
       }
-
-      askedThisSession = true;
       return { ok: true, mode: "native" };
     } catch (err) {
       console.warn("[push:local]", err?.message || String(err));
@@ -140,20 +186,23 @@ export async function ensureLocalNotifications({ forcePrompt = false } = {}) {
   return readyPromise;
 }
 
-/**
- * Show an alert on the phone.
- * Expo Go: system Alert (reliable). Native build: tray notification via expo-notifications.
- */
 export async function showPhoneNotification({ title, body, data = {} } = {}) {
   if (Platform.OS === "web") return { ok: false, reason: "web" };
 
-  const ready = await ensureLocalNotifications();
+  const choice = await getPromptChoice();
+  if (choice === "declined") return { ok: false, reason: "declined" };
+
+  const ready = await ensureLocalNotifications({ forcePrompt: false });
   const heading = title || "AquaNest";
   const message = body || "You have a new update";
 
-  if (isExpoGo() || process.env.EXPO_PUBLIC_ENABLE_NATIVE_PUSH !== "1" || ready.mode === "expo_go") {
-    Alert.alert(heading, message);
-    return { ok: true, mode: "alert" };
+  // Expo Go / no native push: in-app Alert only if user allowed
+  if (!useNativePush() || ready.mode === "expo_go" || ready.mode === "pending") {
+    if (choice === "allowed" || ready.ok) {
+      Alert.alert(heading, message);
+      return { ok: true, mode: "alert" };
+    }
+    return { ok: false, reason: ready.reason || "not_ready" };
   }
 
   if (!ready.ok) return ready;
@@ -182,21 +231,22 @@ export async function showPhoneNotification({ title, body, data = {} } = {}) {
   }
 }
 
-/** Register remote FCM token — development / production builds only. */
+/** Quiet token register — no permission popup (Account screen handles that once). */
 export async function registerPushToken() {
-  if (Platform.OS === "web") {
-    return { ok: false, reason: "web" };
-  }
+  if (Platform.OS === "web") return { ok: false, reason: "web" };
 
-  await ensureLocalNotifications({ forcePrompt: true });
+  const choice = await getPromptChoice();
+  if (choice !== "allowed") return { ok: false, reason: choice || "not_prompted" };
 
-  if (isExpoGo() || process.env.EXPO_PUBLIC_ENABLE_NATIVE_PUSH !== "1") {
+  await ensureLocalNotifications({ forcePrompt: false });
+
+  if (!useNativePush()) {
     return { ok: false, reason: "local_only_expo_go" };
   }
 
   try {
     const Notifications = await import("expo-notifications");
-    const ready = await ensureLocalNotifications();
+    const ready = await ensureLocalNotifications({ forcePrompt: false });
     if (!ready.ok) return ready;
 
     let token = null;

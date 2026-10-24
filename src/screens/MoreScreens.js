@@ -20,6 +20,7 @@ import { getProduct } from "../catalog";
 import { productImage } from "../images";
 import { useAuth } from "../AuthContext";
 import { useNotifications } from "../NotificationCenter";
+import { promptAccountNotificationsOnce, registerPushToken } from "../push";
 import { colors, formatINR } from "../theme";
 import { useTheme } from "../ThemeContext";
 import AnimatedBackground from "../ui/AnimatedBackground";
@@ -386,7 +387,15 @@ export function ProfileScreen({ navigation }) {
       AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
         if (raw) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) });
       });
-    }, [refresh, refreshNotifications]),
+      // One-time Allow / Decline for push — only when signed in on Account
+      if (user) {
+        promptAccountNotificationsOnce()
+          .then((r) => {
+            if (r?.ok) registerPushToken().catch(() => {});
+          })
+          .catch(() => {});
+      }
+    }, [refresh, refreshNotifications, user]),
   );
 
   function updateSetting(patch) {
