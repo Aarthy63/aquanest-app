@@ -12,12 +12,34 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://aquanest-backend.onrender.com",
+        "EXPO_PUBLIC_ENABLE_NATIVE_PUSH": "1",
+        "EXPO_PUBLIC_RAZORPAY_KEY_ID": "rzp_test_SeSYbwzvoVUgwN",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyA7Ppdz99F6dHxOk5mHI21jeek9WcoESjY",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "saiacs-159763.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "saiacs-159763",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "saiacs-159763.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "131308563175",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:131308563175:web:16ecdaf86f645d67d91042"
       }
     },
     "production": {
       "autoIncrement": true,
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://aquanest-backend.onrender.com",
+        "EXPO_PUBLIC_ENABLE_NATIVE_PUSH": "1",
+        "EXPO_PUBLIC_RAZORPAY_KEY_ID": "rzp_test_SeSYbwzvoVUgwN",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyA7Ppdz99F6dHxOk5mHI21jeek9WcoESjY",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "saiacs-159763.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "saiacs-159763",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "saiacs-159763.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "131308563175",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:131308563175:web:16ecdaf86f645d67d91042"
       }
     }
   },
