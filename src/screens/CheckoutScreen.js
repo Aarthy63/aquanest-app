@@ -126,24 +126,26 @@ export default function CheckoutScreen({ navigation }) {
   }
 
   async function finishSuccess({ paymentId, orderId, signature }) {
-    setPaying("processing");
+    // Show success immediately after Razorpay — don't wait on slow confirm APIs
+    setPaying("success");
     try {
       const order = await completeOrder({ paymentId, orderId, signature });
-      setPaying("success");
-      setTimeout(() => {
-        setPayOpen(false);
-        setPaying("idle");
-        setCheckoutReady(false);
-        setPlacedOrder(order);
-        feedback.success("Order placed successfully!", {
-          description: `Confirmation email sent · #${order.id}`,
-        });
-      }, 700);
+      setPayOpen(false);
+      setPaying("idle");
+      setCheckoutReady(false);
+      setPlacedOrder(order);
+      feedback.success("Payment successful", {
+        description: `Order #${order.id} confirmed`,
+      });
     } catch (e) {
       setPaying("idle");
       setPayOpen(false);
       setCheckoutReady(false);
-      feedback.error("Checkout", { description: e.message });
+      feedback.error("Order pending", {
+        description:
+          e.message ||
+          "Payment may have succeeded. Check Orders or contact support with your payment ref.",
+      });
     }
   }
 
@@ -175,24 +177,15 @@ export default function CheckoutScreen({ navigation }) {
 
   function payDemo(outcome) {
     if (!addressId) return;
-    setPaying("processing");
-    setTimeout(async () => {
-      if (outcome === "failed") {
-        setPaying("idle");
-        setPayOpen(false);
-        feedback.error("Payment failed", { description: "No money was deducted. Please try again." });
-        return;
-      }
-      try {
-        const paymentId = `pay_test_${Math.random().toString(36).slice(2, 12)}`;
-        const orderId = rzpOrder?.id || `order_test_${Date.now()}`;
-        await finishSuccess({ paymentId, orderId, signature: "test" });
-      } catch (e) {
-        setPaying("idle");
-        setPayOpen(false);
-        feedback.error("Checkout", { description: e.message });
-      }
-    }, 500);
+    if (outcome === "failed") {
+      setPaying("idle");
+      setPayOpen(false);
+      feedback.error("Payment failed", { description: "No money was deducted. Please try again." });
+      return;
+    }
+    const paymentId = `pay_test_${Math.random().toString(36).slice(2, 12)}`;
+    const orderId = rzpOrder?.id || `order_test_${Date.now()}`;
+    finishSuccess({ paymentId, orderId, signature: "test" });
   }
 
   if (placedOrder) {
@@ -430,13 +423,16 @@ export default function CheckoutScreen({ navigation }) {
           {paying === "processing" && (
             <View style={styles.payStatus}>
               <ActivityIndicator color={c.ocean} />
-              <Text style={[styles.payStatusText, { color: c.muted }]}>Confirming payment…</Text>
+              <Text style={[styles.payStatusText, { color: c.muted }]}>Opening secure checkout…</Text>
             </View>
           )}
           {paying === "success" && (
             <View style={styles.payStatus}>
               <Ionicons name="checkmark-circle" size={28} color={c.success} />
-              <Text style={[styles.payStatusText, { color: c.success, fontWeight: "700" }]}>Payment successful</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.payStatusText, { color: c.success, fontWeight: "700" }]}>Payment successful</Text>
+                <Text style={[styles.payStatusText, { color: c.muted, marginTop: 4 }]}>Placing your order…</Text>
+              </View>
             </View>
           )}
 
